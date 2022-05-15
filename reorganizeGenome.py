@@ -1,16 +1,19 @@
 import sys
 import re
 
+#This script will find the loci name that you wish for the genome to begin with, as specified
+#by 'targetLoci', cut the preceding nucleotides, and add them to the end
+
+#Genome to be rearranged
 inputGenome = sys.argv[1]
+#Output file name
 outputGenome = sys.argv[2]
+#.bed file of loci starting and ending numbers, in a format needed to be used by the bedtools getfasta command
 formattedBed = sys.argv[3]
 targetLoci = sys.argv[4]
-
-#This script will find the loci name that you wish for the genome to begin with, as specified
-#by 'targetLoci', will cut the preceding nucleotides, and add them to the end
-
 #The length of nucleotides per line in the input genome file
-seq_length= 60;
+seq_length= sys.argv[5];
+
 Loci=""
 chunk=[]
 Loci=""
@@ -41,7 +44,7 @@ Loci_first=genomeLines[remainderIndex][(remainderLength+1):]
 
 #The variables below are only important for concatenating the lines
 #of the target sequence for output, so that it can be verified that
-#indeed the reorganized genome indeed begins with the target loci
+#indeed the reorganized genome now begins with the target loci
 Loci_Length = lociEnd = lociStart
 Loci_rest = Loci_Length - len(Loci_first)
 Loci_times = (times + 2) + (int(Loci_rest / seq_length))
