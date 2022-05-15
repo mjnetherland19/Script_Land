@@ -1,15 +1,15 @@
 #!/bin/bash
 
 #This script has been developed to clean single-end RNA-seq reads, so they can be assembled. The pipeline proceeds thus:
-#1. Revmove adapters with bbduk.sh
+#1. Remove adapters with bbduk.sh
 #2. Check read quality with FastQC
 #3. If reads FAIL, then trim with Trimmomatic with conservative parameters
-#4. Error-correct reads and remvoe uncorrectable reads with tadpole.sh
+#4. Error-correct reads and remove uncorrectable reads with tadpole.sh
 #5. Decontaminate reads by filtering out reads that align to an index of rRNA, mitochondrial, and chloroplast sequences
 #6. (Optionally) The clean reads can be assembled, just uncommment the call to the Trinity assembly function
 
 #$1 = a file, where each line is the path to single-end reads
-#$2 = the directory to send
+#$2 = the directory to send all output to
 
 Fastqc ()
 {
@@ -69,6 +69,8 @@ do
 		#Error-correct reads with Tadpole from BBmap suite of scripts
 		#Tadpole will also remove uncorrectable reads
 		$Tad in=trimmed/$name out=tadpoleCorrected/$name mode=correct tu threads=5 2>$Out/tadpole.log
+		
+		#If Rcorrector is preferred, it can be found here
 		#perl Rcorrector/run_rcorrector.pl -s bbduk_trimmed/$name -t 4 -od rcorrected/
 
 		#Decontaminate reads by aligning to an index of bacterial rRNA, chloropalst, and mitochondrial reference sequences
