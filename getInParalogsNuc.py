@@ -1,7 +1,7 @@
 import re
 import sys
-#This script takes a list of file paths, each to a single gene tree, and identify whether it contains outparalogous sequences. It will then output
-#the file paths of inparalogous and outparalogous trees to the appropriate file
+#This script takes a list of file paths, each to a single gene tree, and identifies whether it contains outparalogous sequences. It will then output
+#the file paths of inparalogous and outparalogous trees to the appropriate text file
 
 
 #Used to recognize species names used in trees
