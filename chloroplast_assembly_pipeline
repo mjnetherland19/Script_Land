@@ -1,0 +1,93 @@
+#!/bin/bash
+
+scriptDir="Script_Land"
+spout="spade_output/contigs.fasta"
+ref="allrefseqs.fasta"
+man="adenia_mannii/adenia_mannii.fasta"
+
+u1="unmerged1.fq" 
+u2="unmerged2.fq"
+mer="merged.fq"
+
+aligned1="all_conc/all_con1.fq"
+aligned2="all_conc/all_con2.fq"
+alignedm="all_conc/merged.fq"
+
+ias1="iso_assembly1/"
+ias2="iso_assembly2/"
+
+as1="allrfsq_assembly1/"
+as2="allrfsq_assembly2/"
+
+g="genie/gen"
+ott="onlyTilingTigs.fasta"
+munmerged1="munmerged1_show-tiling.txt"
+log="spade_output/spades.log"
+pool="pooled_contigs.fasta"
+
+dir=$(basename $1)
+mkdir $dir
+assemblyDir="$dir/"
+
+unmerged1=$assemblyDir$u1
+unmerged2=$assemblyDir$u2
+merged=$assemblyDir$mer
+
+mkdir $assemblyDir$ias1 $assemblyDir$ias2 $assemblyDir$as1 $assemblyDir$as2 $assemblyDirgenie
+
+./$scriptDir/Trimm_ErrorCSPAdes $first $second $assemblyDir
+echo Trimming + Error Correct Completed $h
+
+./$scriptDir/bbmerge $assemblyDir
+echo Merge Completed $h
+
+#Assembly Method #1
+#1. Extracting chloroplast-like reads from the WGS dataset by aligning them to a close relative: Adenia mannii
+#2. Captured reads are then assembled (Assembly 1), the resulting contigs are made into an index and original read set
+#   are aligned to them
+#3. Captured reads are then assembled (Assembly 2)
+./$scriptDir/Bowtie2 $man $unmerged1 $unmerged2 $merged $assemblyDir$ias1 > /dev/null
+./$scriptDir/SPAdes $assemblyDir$ias1$aligned1 $assemblyDir$ias1$aligned2 $assemblyDir$ias1$alignedm $assemblyDir$ias1 > /dev/null
+./$scriptDir/Bowtie2 $assemblyDir$ias1$spout $unmerged1 $unmerged2 $merged $assemblyDir$ias2 > /dev/null
+./$scriptDir/SPAdes $assemblyDir$ias2$aligned1 $assemblyDir$ias2$aligned2 $assemblyDir$ias2$alignedm $assemblyDir$ias2 > /dev/null
+echo Iso Completed $h
+
+#Assembly Method #2
+#1. The WGS reads are assembled and the contigs are blasted against databases made from A. mannii and 3 chloroplast Ref-Seq from NCBI
+#2. The best contigs are extracted (Assembly 3) using the blast output with chloroplast_contig_filter, which calls all_refseqs.py 
+#3. These contigs are aligned to and the captured reads are assembled (Assembly 4)
+./$scriptDir/SPAdes $unmerged1 $unmerged2 $merged $assemblyDir$as1 > /dev/null
+./$scriptDir/chloroplast_contig_filter $assemblyDir$as1$spout $assemblyDir$as1 > /dev/null
+./$scriptDir/Bowtie2 $assemblyDir$as1$ref $unmerged1 $unmerged2 $merged $assemblyDir$as2 > /dev/null
+./$scriptDir/SPAdes $assemblyDir$as2$aligned1 $assemblyDir$as2$aligned2 $assemblyDir$as2$alignedm $assemblyDir$as2 > /dev/null
+echo De Novo Completed $h
+
+#Assembly Method #3
+#1. Extracting chloroplast-like reads from the WGS dataset by aligning them to a close relative: Adenia mannii
+#2. Captured reads are then assembled (Assembly 1), the resulting contigs are made into an index and original read set
+#   are aligned to them
+#3. Captured reads are then assembled (Assembly 2)
+
+#KmerGenie will use the reads used in Assembly 1 to pick the best kmer for assembly in Velvet
+readlink -f $assemblyDir$ias1$aligned1 $assemblyDir$ias1$aligned2 $assemblyDir$ias1$alignedm > fileNames.txt
+./$scriptDir/genie $assemblyDir$g
+
+#These commands will grab the best kmer and create bounds ('begin' and 'end') for a range of kmers for multiple Velvet runs
+ult=$(awk 'NR==22 {print $3}' genie.txt)
+mv genie.txt $assemblyDir
+begin=$((ult-4))
+fin=$((ult+6))
+
+#velvet_loop will assemble the reads used in Assembly 1 with Velvet for a range of kmers
+./$scriptDir/velvet_loop $assemblyDir $begin $fin > /dev/null
+mv Velvet $assemblyDir
+echo Velvet Completed $h
+
+#All contigs are pooled
+cat $assemblyDir$ias1$spout >> $assemblyDir$pool > /dev/null
+cat $assemblyDir$ias2$spout >> $assemblyDir$pool > /dev/null
+cat $assemblyDir$as1$ref >> $assemblyDir$pool > /dev/null
+cat $assemblyDir$as2$spout >> $assemblyDir$pool > /dev/null
+
+#MUMmer3 is called to create a draft assembly from the pooled contig by aligning contigs to the A. mannii genome
+./$scriptDir/getTiling $assemblyDir$pool $assemblyDir
