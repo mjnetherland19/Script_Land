@@ -216,7 +216,7 @@ if __name__ == "__main__":
         
         dic={}
 
-        # Starting dictionary to be sent to Senaite for sample import. DateSampled is required for manual sample createion, but
+        # Starting dictionary to be sent to Senaite for sample import. DateSampled is required for manual sample creation, but
         # it isn't requred for using this script. You can exclude it. If you ever want to use it, just add "DateSampled" : "2020-03-19 15:56:20"
         # Senaite prefers that date format I believe. Similarly, if you ever want to include the client contact, add "Contact": "<client_contact_uid>" to
         # the 'data' dictionary
