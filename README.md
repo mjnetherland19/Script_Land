@@ -11,4 +11,4 @@ getInParalogsNuc.py: Identifies the presence of out-paralog sequences from Newic
 
 importSamples.py: A simple GUI that allows the user to pick the Client and Contact and imports their sample data from and Excel file into Senaite
 
-reorganizeGenome.py: Finds a locus given a .bed file and removes the nucleotides preceding the locus and appends them to the bottom of the genome. I should think this is suitable for chromosomes as well. It was used on chloroplast genomes, hence the name. 
+reorganizeGenome.py: Finds a locus given a .bed file and removes the nucleotides preceding the locus and appends them to the bottom of the genome. I should think this is suitable for chromosomes as well. It was developed for chloroplast genomes.
