@@ -2,7 +2,7 @@ import ast
 import os
 import re
 import pandas as pd
-from newtSearch import *
+from newt_search import *
 
 class Meal:
     def __init__(self,name):
@@ -93,7 +93,7 @@ def makeMeal(meal):
                 else:
                     meal.getTotal()
             else:
-                food_number,food_name=newtSearch(food,meal.rdi)
+                food_number,food_name=newt_search(food,meal.rdi)
 
                 if food_number == 0:
                     continue
