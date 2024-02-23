@@ -7,9 +7,7 @@
 #For the JSD function to work the data table must be in the format: Samples as columns and taxa abundance as rows. The first row can be labels (?)
 
 #arg 1 - taxa relative abundance matrix: Data table format needs to be samples as columns, genus as rows, if not then t()
-#arg 2 - PCoA coordinate output file name
-#arg 3 - png file name
-#arg 4 - "best" or "else"
+#arg 2 - output file name prefix for distance matrix, PCoA coordinates, and image files
 
 args = commandArgs(trailingOnly=TRUE)
 
