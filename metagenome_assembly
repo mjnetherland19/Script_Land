@@ -1,0 +1,86 @@
+#!/bin/bash
+
+spades()
+{
+	spades='/opt/SPAdes-3.15.5-Linux/bin/spades.py'
+	out=meta_spades_out/${samp}
+	mkdir -p $out
+	$spades --meta -o ${out} -1 $R1 -2 $R2
+}
+
+maxbin()
+{
+	out=maxbin_out/${samp}/
+	mkdir -p ${out}
+	echo " MaxBin $(date)"
+	run_MaxBin.pl -contig $contigs -reads $R1 -reads2 $R2 -out ${out}/${samp} -thread 7
+
+}
+
+metabat()
+{
+
+	mkdir -p bwa_metabat/${samp} metabat_files/${samp} metabat_bins/${samp}
+
+	echo " bwa index started $(date)"
+	bwa index -p bwa_metabat/${samp} $contigs 
+
+	echo " bwa mem started $(date)"
+	bwa mem bwa_metabat/${samp} $R1 $R2 -t 7 | samtools sort -o metabat_files/${samp}/alignment.bam
+	samtools index metabat_files/${samp}/alignment.bam
+
+	docker run --user $(id -u):$(id -g) --workdir $(pwd) --volume $(pwd):$(pwd) metabat/metabat:latest runMetaBat.sh $contigs metabat_files/${samp}/alignment.bam
+
+}
+
+das()
+{
+
+	mkdir -p final_bins/${samp} das_out/${samp}
+
+	for final in *.fasta.metabat*/*.fa
+	do
+		sed -i 's/\t.\+//g' $final
+		makeDas.py $final final_bins/${samp}/metabat.contig2bin
+	done
+
+	for final in maxbin_out/${samp}/*.fasta
+	do
+		makeDas.py $final final_bins/${samp}/maxbin.contig2bin
+	done
+
+	meta="final_bins/${samp}/metabat.contig2bin"
+	max="final_bins/${samp}/maxbin.contig2bin"
+
+	#DasTool has a script to make contig2bin tables
+	#Can also give prodigal proteins as input. Check README
+
+	eval "$(conda shell.bash hook)"
+	conda activate das_tool
+
+	DAS_Tool -i $meta,$max -c $contigs -o das_out/${samp}/${samp} -l metabat2,maxbin -t 7
+
+	#sep_contigs2bin.py das_out/${samp}/${samp}_DASTool_contig2bin.tsv
+
+}
+
+samp=$1
+
+contigs=$2
+
+R1=${samp}/${samp}_R1.fastq.gz
+R2=${samp}/${samp}_R2.fastq.gz
+
+if [ ! -z $contigs ]
+then
+    spades
+fi
+
+maxbin
+metabat
+das
+
+checkm lineage_wf -r -x fa *.fasta.metabat* checkm_out/${samp} > checkm_out/${samp}/checkm.out 2>&1
+
+checkm lineage_wf -r -x fasta maxbin_out/${samp} checkm_out/${samp} > checkm_out/${samp}/checkm.out 2>&1
+
