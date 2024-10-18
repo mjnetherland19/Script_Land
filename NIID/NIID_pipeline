@@ -1,0 +1,422 @@
+#!/bin/bash
+
+do_fastqc() {
+	echo "doing fastqc"
+	if [[ ! -f $R1 ]] || [[ ! -f $R2 ]]; then
+		echo "Read FASTQ files don't exist. Skipping fastqc."
+		return
+	fi
+
+	fastqcdir="fastqc_out_$1"
+	cmkdir $fastqcdir
+	fastqc $R1 -o $fastqcdir $fastqc_args &>> $logfile
+	fastqc $R2 -o $fastqcdir $fastqc_args &>> $logfile
+}
+
+do_bbduk() {
+	echo "doing bbduk"
+	if [[ ! -f $R1 ]] || [[ ! -f $R2 ]]; then
+		echo "Read FASTQ files don't exist. Skipping bbduk."
+		return
+	fi
+
+	#Make sure bbduk.sh in your PATH
+	bbduk.sh in1=$R1 in2=$R2 out1=${line}_R1_trim.gz out2=${line}_R2_trim.gz $bbduk_args &>> $logfile
+	
+	mv ${line}_R1_trim.gz $R1
+	mv ${line}_R2_trim.gz $R2
+	
+}
+
+do_spades() {
+
+	if [[ ! -f $R1 ]] || [[ ! -f $R2 ]]; then
+		echo "Read FASTQ files don't exist. Skipping spades."
+		return
+	fi
+
+	echo "doing spades"
+	cmkdir spades_out/
+
+	$spades --isolate ${spades_args} -o spades_out/ -1 $R1 -2 $R2 &>> $logfile
+	cmkdir assembly
+	
+	mv spades_out/contigs_sub.fasta assembly/${prefix}.fasta
+
+	#Remove the majority of contig header lines - if lines are too long, prokka won't run
+	sed -i 's/_length.\+//g' assembly/${line}.fasta
+}
+
+do_blast()
+{
+	blastn -num_threads 8 -evalue 10 -max_target_seqs 5 -outfmt '10 qseqid pident sacc sstart send slen qstart qend length stitle' -query $1 -db /data/databases/blastdb/nt/nt 1>> blast_hits.txt 2> blast.log
+}
+
+extract_16S()
+{
+	database=${SCRIPT_DIR}/database/bacteria_16S_HMM
+
+    	contigs=$1
+
+    	name=$(echo $contigs | cut -d. -f1)
+
+    	nhmmscan --dfamtblout ${name}.res --noali ${database}/bacteria_16S.hmm $contigs >/dev/null
+    
+    	res=$(python3 ${SCRIPT_DIR}/scripts/parse_hmmer.py ${name}.res)
+    
+    	seq=$(echo $res | cut -d, -f1)
+    	strand=$(echo $res | cut -d, -f2)
+
+    	samtools faidx $contigs ${seq} > ${name}_16S.fasta
+}
+
+do_profile()
+{
+	cmkdir ucg
+	cmkdir genomes
+	
+    	#Change the paths to these files as appropriate	
+	java -jar /opt/UBCG_ver2/UBCG2.jar -i assembly/${prefix}.fasta -ucg_dir ucg -label ${name} -hmm /opt/UBCG_ver2/hmm/ubcg_v2.hmm
+
+	python3 ${SCRIPT_DIR}/scripts/get_core_genes.py ucg/${name}.ucg
+
+	do_blast concatenated_core_genes.fasta
+
+	sh ${SCRIPT_DIR}/scripts/extract_16S.sh assembly/${prefix}.fasta
+
+	do_blast contigs_16S.fasta
+
+	grep -v "#" blast_hits.txt | grep "genome\|chromosome" | cut -d, -f3 | sort | uniq -d > genome_acc
+	grep -v "#" blast_hits.txt | grep "RNA" | cut -d, -f3 | sort | uniq -u > ribo_acc
+
+	grep -v "#" blast_hits.txt |  cut -d, -f10 | cut -d" " -f1-2 | sort | grep -v "sp\." | uniq -d > species_names
+	grep -v "#" blast_hits.txt |  cut -d, -f10 | cut -d" " -f1-2 | sort | grep -v "sp\." | uniq -u >> species_names
+
+	#Make sure genome names are downloaded as full genus and species names for MLST scheme check
+	${SCRIPT_DIR}/scripts/download_best_genome.sh species_names genomes
+
+do_checkm() {
+	echo "doing checkm"
+	if [[ ! -f assembly/${line}.fasta ]]; then
+		echo "Assembled contig doesn't exist. Skipping checkm."
+		return
+	fi
+
+	cmkdir checkm_out
+	checkm ${checkm_args} checkm_out/${line} > checkm_out/checkm.out
+
+}
+
+do_quast() {
+	echo "doing quast"
+	if [[ ! -f assembly/${line}.fasta ]]; then
+		echo "Assembled contig doesn't exist. Skipping quast."
+		return
+	fi
+
+	cmkdir quast_out
+	quast.py ${quast_args} -o quast_out assembly/${line}.fasta &>> $logfile
+}
+
+do_plasmidfinder() {
+	echo "doing plasmidfinder"
+	if [[ ! -f assembly/${line}.fasta ]]; then
+		echo "Assembled contig doesn't exist. Skipping plasmidfinder."
+		return
+	fi
+
+	cmkdir plasmidfinder_out
+	sh ${SCRIPT_DIR}/scripts/run_plasmidfinder.sh $line $logfile $plasmidfinder_args
+}
+
+
+do_mlst() {
+	echo "doing mlst"
+	if [[ ! -f assembly/${line}.fasta ]]; then
+		echo "Assembled contig doesn't exist. Skipping mlst."
+		return
+	fi
+
+	#Check if a MLST is available
+	while read line; do target=${line}; done<target
+	
+	mlst=$(grep "$target" scheme_species_map.csv)
+
+	#Get MLST
+	if [[ ! -z $mlst ]]
+	then
+		run_mlst assembly/${line}.fasta > mlst.out 2>$logfile
+	else
+		echo No MLST available for $cut_species
+	fi
+}
+
+do_orthoani()
+{
+	echo "doing orthoani"
+	java -jar /opt/OAU.jar -fd ${genome_dir} -fmt json -u /opt/usearch11.0.667_i86linux32 > ${out}/usearch_orthoani.json
+	
+	python3 ${SCRIPT_DIR}/scripts/parse_OAU.py usearch_orthoani.json matrix
+		
+	echo $target > target
+}
+
+do_parsnp()
+{
+	echo "doing parsnp"
+	
+	cmkdir parsnp_out
+
+	sh ${SCRIPT_DIR}/scripts/download_best_genome.sh target strain_genomes 10
+
+	sh ${SCRIPT_DIR}/scripts/run_parsnp.sh strain_genomes parsnp_out $logfile 
+
+	#Make SNP matrix
+	python3 ${SCRIPT_DIR}/scripts/make_snp_matrix_from_vcf.py parsnp_out/parsnp.vcf parsnp_out/${line} parsnp_names
+
+	echo "done with parsnp"
+
+	for x in strain_genomes/*; do realpath $x >> paths; done
+
+	mash sketch -l paths
+
+	mash dist paths.msh assembly/${prefix}.fasta > mash.out
+
+	sed -i 's/\t/,/g' mash.out
+
+	reference=$(python3 parse_mash.py)
+    
+	do_ragtag $reference
+	do_ntjoin $reference
+	do_nucmer $reference
+}
+
+do_prokka()
+{
+	echo "doing prokka"
+	if [[ ! -f assembly/${line}.fasta ]]; then
+		echo "Assembled contig doesn't exist. Skipping prokka."
+		return
+	fi
+
+	sh ${SCRIPT_DIR}/scripts/run_prokka.sh assembly/${line}.fasta ${prokka_args} $logfile
+}
+
+do_genovi() 
+{
+	echo "doing genovi"
+	if [[ ! -f assembly/${line}.fasta ]]; then
+		echo "Assembled contig doesn't exist. Skipping genovi."
+		return
+	fi
+
+	sh ${SCRIPT_DIR}/scripts/run_genovi,sh *_prokka/*.gbk $logfile $genovi_args
+	
+	path=$(realpath genovi)
+	
+	get_genovi_table.py $path $line
+}
+
+do_nucmer()
+{
+	echo "doing nucmer"
+	
+	reference=$1
+	cmkdir nucmer_out
+	sh get_pseudomolecule.sh $prefix $reference assembly/${prefix}.fasta
+	
+}
+
+do_ntjoin()
+{
+	echo "doing ragtag"
+	
+	reference=$1
+	cmkdir ntjoin_out
+	cp assembly/${prefix}.fasta ntjoin_out
+	
+	cd ntjoin_out
+	run_ntjoin ${prefix}.fasta $reference
+	cd ..
+	
+	nt_scff="*.fasta.*.all.scaffolds.fa"
+	
+	#sed -i 's/_length.\+//g' ${line}.fasta		
+	#rm out.k32*
+	
+}
+
+do_ragtag() 
+{
+	echo "doing ragtag"
+	
+	reference=$1
+	cmkdir ragtag_out
+	cp assembly/${prefix}.fasta ragtag_out
+	
+	run_ragtag $reference ragtag_out/contigs.fasta ragtag_out
+	
+	rag_scff="ragtag_out/ragtag.scaffold.fasta"
+	
+}
+
+copy_key_outputs() {
+	echo "Copying key outputs"
+	cmkdir ${line}_outputs
+	copy_file "${line}_parsnp_tree.png" ${line}_outputs
+	copy_file parsnp_out/*.png ${line}_outputs
+	copy_file "mlst.out" ${line}_outputs
+	copy_file "${line}_TrueBac_results.csv" ${line}_outputs
+	copy_file "AMR_${line}.csv" ${line}_outputs
+	makeAMR_DF.py "AMR_${line}.csv" ${line}_outputs/${line}_amr_parsed.csv
+	copy_file "VF_${line}.csv" ${line}_outputs
+	makeVF_DF.py "VF_${line}.csv" ${line}_outputs/${line}_vf_parsed.csv
+	copy_file "checkm_out/checkm.out" ${line}_outputs
+	copy_file assembly/*.fasta ${line}_outputs
+	copy_file "genovi/genovi.png" ${line}_outputs/${line}_genovi.png
+	copy_file *prokka/*gbk ${line}_outputs
+	copy_file *prokka/*gff ${line}_outputs
+	copy_file "${line}_orthoani_matrix.png" ${line}_outputs
+	copy_file core_genome.csv ${line}_outputs
+	copy_file genovi/${line}* ${line}_outputs
+}
+
+copy_file() {
+	if [[ -f $1 ]]; then
+		cp $1 $2
+	fi
+}
+
+# configuration / arguments are wrong enough to warrant stopping program completely.
+error() {
+	echo $1
+	exit 1
+}
+
+#Check and Make Directory
+cmkdir() {
+	[[ -d $1 ]] || mkdir $1
+}
+
+SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
+
+fastqc_args="-t 6 --nogroup"
+bbduk_args="qtrim=r trimq=10"
+spades_args="-t 5 -k 21,33,55,77,99"
+checkm_args="lineage_wf -r -x fasta assembly"
+quast_args="-t 4"
+plasmidfinder_args=""
+prokka_args="--force"
+genovi_args=""
+
+checkm_halt=off
+
+logfile="logfile"
+
+#Functions turned on when wgs_pipeline called with no options/flags
+using_fastqc=on
+using_bbduk=on
+using_spades=on
+using_checkm=on
+using_quast=on
+using_plasmidfinder=off
+using_truebac=on
+using_mlst=on
+using_parsnp=on
+using_orthoani=on
+using_prokka=on
+using_genovi=on
+
+#process command flags
+pipeline_parts=( 'fastqc' 'bbduk' 'spades' 'checkm' 'quast' 'plasmidfinder' 'dwng' 'mlst' 'parsnp' 'orthoani' 'prokka' 'genovi' 'nucmer')
+
+
+while test $# -gt 1
+do
+	#'shift' pops one of the arguments off the stack, so that each argument can be evaluated sequentially
+	#By the end of the loop the last argument will be FILES
+	
+	case "$1" in
+	--*)
+		switch_part=${1:2}
+		if [[ " ${pipeline_parts[*]} " =~  " $switch_part " ]]; then
+			eval using_$switch_part="on"
+			shift
+			continue
+		fi
+		;;&
+	--no-*)
+		switch_part=${1:5}
+		if [[ " ${pipeline_parts[*]} " =~  " $switch_part " ]]; then
+			eval using_$switch_part="off"
+			shift
+			continue
+		fi
+		error "Tried to switch off invalid component: $1"
+		;;
+	#Turns everything off
+	--only)
+
+		shift
+		for part in "${pipeline_parts[@]}"; do
+			eval using_$part="off"
+		done
+		;;
+	*)
+		echo $#
+		error "Error parsing. You added an invalid flag (or forgot to put the filename at the end): ${1}"
+		;;
+	esac
+done
+
+fileslist=()
+
+#Read file list into array
+while read fileline; do
+	fileslist+=($fileline)
+done<$1
+
+echo "${fileslist[@]}"
+
+cp ${base}/Assembly_Statistics.csv .
+cp ${base}/CheckM_Statistics.csv .
+
+for prefix in "${fileslist[@]}"; do
+	
+	echo "processing line: ${line}"
+	
+	home=$(pwd)
+
+	cd $line
+
+	>$logfile
+	
+	R1=${line}_R1.fastq.gz
+	R2=${line}_R2.fastq.gz
+
+	[[ $using_fastqc = "on" ]] && do_fastqc "pre"
+	[[ $using_bbduk = "on" ]] && do_bbduk
+	[[ $using_fastqc = "on" ]] && do_fastqc "post"
+	[[ $using_spades = "on" ]] && do_spades
+	[[ $using_checkm = "on" ]] && do_checkm
+	[[ $using_plasmidfinder = "on" ]] && do_plasmidfinder
+	[[ $using_mlst = "on" ]] && do_mlst
+	[[ $using_parsnp = "on" ]] && do_parsnp
+	[[ $using_quast = "on" ]] && do_quast
+	[[ $using_orthoani = "on" ]] && do_orthoani
+	[[ $using_prokka = "on" ]] && do_prokka
+	[[ $using_genovi = "on" ]] && do_genovi
+
+	if [ ! -d ${line}_copy_key_inputs ]
+	then
+		copy_key_outputs
+	fi
+
+	cd $home
+	
+	python3 ${SCRIPT_DIR}/scripts/makeCheckmDF.py "${line}/checkm_out/checkm.out" CheckM_Statistics.csv
+	python3 ${SCRIPT_DIR}/scripts/makeQuastDF.py "${line}/quast_out/report.txt" Assembly_Statistics.csv
+	
+done
+#Add date
+echo "finished pipeline"
