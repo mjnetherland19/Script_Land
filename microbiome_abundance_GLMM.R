@@ -45,6 +45,7 @@ for (taxa in taxa_list){
     taxa.df$ID <- as.factor(taxa.df$ID)
    
     form=formula(paste(taxa,"~ Treatment + Period + Sequence + (1|ID)"))
+    #Carry-over effect
     carry=formula(paste(taxa,"~ Treatment*Period + (1|ID)"))
 		       
     model.poisson = glmer(form, data = taxa.df,family=poisson)
